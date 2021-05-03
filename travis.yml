@@ -1,23 +1,51 @@
-language: php
+language: generic
 
-php:
-  - 5.3
-  - 5.4
-  - 5.5
-  - hhvm
+dist: xenial
 
+branches:
+  only:
+  - develop
+  - /^release-.*$/
+  - /^hotfix-.*$/
+  - master
+  - /^v.*$/
+
+before_install:
+  - nvm install 12
+  - pip install --user s3cmd==2.0.2 awscli==1.16.208
+  - go get github.com/segmentio/chamber
+
+# Workaround for dealing with long running feature branches when merged, breaking deployments.
+# https://github.com/travis-ci/travis-ci/issues/4596#issuecomment-434532772
 before_script:
-  - curl -s http://getcomposer.org/installer | php
-  - php composer.phar install --dev --prefer-source
+  - OLDEST_SHARED=`git log --format=%H $TRAVIS_COMMIT_RANGE | tail -n1`
+  - OLDEST_COMMIT=`git log --format=%H | tail -n1`
+  - if [ $OLDEST_SHARED == $OLDEST_COMMIT ]; then git fetch --depth=200; fi
+  - nvm use 12
+  # Remove node modules if already exists
+  - rm -rf www/node_modules
+  # Exports app config as environment variables stored in AWS parameter store / Chamber
+  - source scripts/set-app-environment.sh
+  - 'if [ "${TRAVIS_PULL_REQUEST}" = "false" ]; then $(chamber env ${APP_ENVIRONMENT}-web-app); else echo "Running in PR: not pulling config from chamber"; fi'
+  - source server/scripts/docker/app-env-config.sh
+
+env:
+  - DOCKER_COMPOSE_VERSION=1.4.2 AWS_DEFAULT_REGION=ap-northeast-1
 
 script:
-  - mkdir -p build/logs
-  - phpunit --coverage-clover build/logs/clover.xml --configuration tests/phpunit.xml tests
+    - pushd www
+    - npm ci  # Install packages using the exact packages from npm-shrinkwrap.json
+    - TRAVIS_BUILD=true npm run test-coverage:ci  # Run web unit tests    
+    # TODO: For now ignore npm lint until we get our lint error #'s under control
+    # - npm run lint
+    # - npm audit # Audit installed packages for potential vulnerabilities in 3rd party packages
+    - popd
+    - pushd server
+    - bash scripts/run_tests.sh
+    - popd
 
-after_script:
-  - php vendor/bin/coveralls -v
-
-notifications:
-  slack:
-    rooms:
-      secure: your_token_key
+deploy:
+  provider: script
+  script: bash scripts/deploy.sh
+  on:
+    all_branches: true
