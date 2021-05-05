@@ -1,3 +1,4 @@
+//aaa
 class Fuga {
 /////
     public function index() {
