@@ -1,4 +1,4 @@
-class Fuga {
+//class Fuga {
 /////
     public function index() {
         return false;
